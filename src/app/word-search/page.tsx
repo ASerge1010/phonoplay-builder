@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Footer from "../components/Footer";
 import Navigation from "../components/Navigation";
@@ -44,7 +44,122 @@ export default function WordSearch() {
   const [foundWords, setFoundWords] = useState<string[]>([]);
   const [difficulty, setDifficulty] = useState("Easy");
   const [message, setMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+const [saveMessage, setSaveMessage] = useState("");
 
+const [savedActivities, setSavedActivities] = useState<any[]>([]);
+const [selectedActivityId, setSelectedActivityId] = useState("");
+
+useEffect(() => {
+  const loadActivities = async () => {
+    try {
+      const response = await fetch("/api/activities");
+      const data = await response.json();
+
+      if (response.ok) {
+        setSavedActivities(data);
+      }
+    } catch (error) {
+      console.error("Could not load activities:", error);
+    }
+  };
+
+  loadActivities();
+}, []);
+
+const savedWordSearchActivities = savedActivities.filter(
+  (activity) => activity.type === "WORD_SEARCH"
+);
+
+const selectedSavedActivity = savedWordSearchActivities.find(
+  (activity) => activity.id === Number(selectedActivityId)
+);
+
+const activeWords =
+  selectedSavedActivity?.words?.length > 0
+    ? selectedSavedActivity.words.map((item: { phonemes: string; word: string }) => ({
+        phonemes: item.phonemes,
+        english: item.word.toUpperCase(),
+      }))
+    : words;
+
+useEffect(() => {
+  if (!selectedActivityId) return;
+
+  const selectedActivity = savedActivities.find(
+    (activity) =>
+      activity.id === Number(selectedActivityId) &&
+      activity.type === "WORD_SEARCH"
+  );
+
+  if (selectedActivity) {
+    const formattedDifficulty =
+      selectedActivity.difficulty.charAt(0) +
+      selectedActivity.difficulty.slice(1).toLowerCase();
+
+    setDifficulty(formattedDifficulty);
+  }
+}, [selectedActivityId, savedActivities]);
+
+const saveWordSearchActivity = async () => {
+  try {
+    setIsSaving(true);
+    setSaveMessage("");
+
+    const activityResponse = await fetch("/api/activities", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Phoneme Word Search",
+        type: "WORD_SEARCH",
+        difficulty: difficulty.toUpperCase(),
+        description: "Phoneme-based Word Search classroom activity",
+        instructions: "Find the target phoneme words in the grid",
+        gridSize: 8,
+        showHints: true,
+      }),
+    });
+
+    const activity = await activityResponse.json();
+
+    if (!activityResponse.ok) {
+      throw new Error(activity.error || "Could not save activity.");
+    }
+
+    for (const item of words) {
+      const wordResponse = await fetch("/api/words", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          word: item.english.toLowerCase(),
+          phonemes: item.phonemes,
+          hint: `Find ${item.english} in the grid`,
+          activityId: activity.id,
+        }),
+      });
+
+      const savedWord = await wordResponse.json();
+
+      if (!wordResponse.ok) {
+        throw new Error(savedWord.error || "Could not save word.");
+      }
+    }
+
+    setSaveMessage("Word Search activity saved successfully!");
+  } catch (error) {
+    if (error instanceof Error) {
+      setSaveMessage(error.message);
+    } else {
+      setSaveMessage("Something went wrong.");
+    }
+  } finally {
+    setIsSaving(false);
+  }
+};
   const selectCell = (index: number) => {
     if (selectedCells.includes(index)) {
       setSelectedCells(
@@ -270,30 +385,16 @@ It corresponds to <strong>THIN</strong>.
 
 <div class="words">
 
-<div class="word">
-<strong>/θɪn/</strong>
-<span>THIN</span>
-</div>
-
-<div class="word">
-<strong>/ʃɪp/</strong>
-<span>SHIP</span>
-</div>
-
-<div class="word">
-<strong>/mæn/</strong>
-<span>MAN</span>
-</div>
-
-<div class="word">
-<strong>/sɪt/</strong>
-<span>SIT</span>
-</div>
-
-<div class="word">
-<strong>/kæt/</strong>
-<span>CAT</span>
-</div>
+${activeWords
+  .map(
+    (word: { phonemes: string; english: string }) => `
+      <div class="word">
+        <strong>${word.phonemes}</strong>
+        <span>${word.english}</span>
+      </div>
+    `
+  )
+  .join("")}
 
 </div>
 
@@ -322,13 +423,11 @@ const letters = [
 "S","H","I","P","M","A","N","X"
 ];
 
-const targetWords = [
-"THIN",
-"SHIP",
-"MAN",
-"SIT",
-"CAT"
-];
+const targetWords = ${JSON.stringify(
+  activeWords.map(
+    (word: { phonemes: string; english: string }) => word.english
+  )
+)};
 
 let selected = [];
 
@@ -476,6 +575,27 @@ document.getElementById("feedback").textContent = "";
               </div>
 
             </div>
+
+            <div className="settingGroup">
+  <label>Saved Word Search Activities</label>
+
+  {savedWordSearchActivities.length === 0 ? (
+    <p className="emptyState">No saved Word Search activities yet.</p>
+  ) : (
+    <select
+      value={selectedActivityId}
+      onChange={(event) => setSelectedActivityId(event.target.value)}
+    >
+      <option value="">Select a saved activity</option>
+
+      {savedWordSearchActivities.map((activity) => (
+        <option key={activity.id} value={activity.id}>
+          {activity.name} — {activity.difficulty}
+        </option>
+      ))}
+    </select>
+  )}
+</div>
 
             <div className="settingGroup">
 
@@ -683,12 +803,28 @@ document.getElementById("feedback").textContent = "";
 
           </div>
 
-          <button
-            className="primaryButton generateButton"
-            onClick={generateHTML}
-          >
-            Generate HTML
-          </button>
+          <div className="buttonRow">
+  <button
+    className="secondaryButton"
+    onClick={saveWordSearchActivity}
+    disabled={isSaving}
+  >
+    {isSaving ? "Saving..." : "Save Activity"}
+  </button>
+
+  <button
+    className="primaryButton generateButton"
+    onClick={generateHTML}
+  >
+    Generate HTML
+  </button>
+</div>
+
+{saveMessage && (
+  <div className="feedback feedbackSuccess" role="status">
+    {saveMessage}
+  </div>
+)}
 
         </section>
 

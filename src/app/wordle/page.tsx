@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Footer from "../components/Footer";
 import Navigation from "../components/Navigation";
@@ -20,6 +20,128 @@ export default function Wordle() {
   const [difficulty, setDifficulty] = useState("Easy");
   const [selectedPhonemes, setSelectedPhonemes] = useState<string[]>([]);
   const [message, setMessage] = useState("");
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [savedActivities, setSavedActivities] = useState<any[]>([]);
+
+  const [selectedActivityId, setSelectedActivityId] = useState("");
+
+useEffect(() => {
+  const loadActivities = async () => {
+    try {
+      const response = await fetch("/api/activities");
+      const data = await response.json();
+
+      if (response.ok) {
+        setSavedActivities(data);
+      }
+    } catch (error) {
+      console.error("Could not load activities:", error);
+    }
+  };
+
+  loadActivities();
+}, []);
+
+const savedWordleActivities = savedActivities.filter(
+  (activity) => activity.type === "WORDLE"
+);
+
+const selectedSavedActivity = savedWordleActivities.find(
+  (activity) => activity.id === Number(selectedActivityId)
+);
+
+const selectedSavedWord = selectedSavedActivity?.words?.[0];
+
+const activeTargetWord = selectedSavedWord?.phonemes
+  ? selectedSavedWord.phonemes.split(" | ")
+  : targetWord;
+
+const activeHint =
+  selectedSavedWord?.hint || "Something that is not thick";
+
+const activeAnswer =
+  selectedSavedWord?.word || "thin";
+
+useEffect(() => {
+  if (!selectedActivityId) return;
+
+  const selectedActivity = savedWordleActivities.find(
+    (activity) => activity.id === Number(selectedActivityId)
+  );
+
+  if (selectedActivity) {
+    const formattedDifficulty =
+      selectedActivity.difficulty.charAt(0) +
+      selectedActivity.difficulty.slice(1).toLowerCase();
+
+    setDifficulty(formattedDifficulty);
+  }
+}, [selectedActivityId]);
+
+const saveWordleActivity = async () => {
+  try {
+    setIsSaving(true);
+    setMessage("");
+
+    const activityResponse = await fetch("/api/activities", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Phoneme Wordle",
+        type: "WORDLE",
+        difficulty: difficulty.toUpperCase(),
+        description: "Phoneme-based Wordle classroom activity",
+        instructions: "Guess the phoneme-based word",
+        maxAttempts:
+  difficulty === "Easy"
+    ? 6
+    : difficulty === "Medium"
+    ? 5
+    : 4,
+        showHints: true,
+      }),
+    });
+
+    const activity = await activityResponse.json();
+
+    if (!activityResponse.ok) {
+      throw new Error(activity.error || "Could not save activity.");
+    }
+
+    const wordResponse = await fetch("/api/words", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        word: "thin",
+        phonemes: targetWord.join(" | "),
+        hint: "Something that is not thick",
+        activityId: activity.id,
+      }),
+    });
+
+    const savedWord = await wordResponse.json();
+
+    if (!wordResponse.ok) {
+      throw new Error(savedWord.error || "Could not save word.");
+    }
+
+    setMessage("Activity saved successfully!");
+  } catch (error) {
+    if (error instanceof Error) {
+      setMessage(error.message);
+    } else {
+      setMessage("Something went wrong.");
+    }
+  } finally {
+    setIsSaving(false);
+  }
+};
 
   const generateHTML = () => {
     const html = `
@@ -241,10 +363,9 @@ export default function Wordle() {
     </div>
 
     <div class="hint">
-      <strong>Hint:</strong>
-      The first phoneme is <strong>/θ/</strong>, which corresponds
-      to <strong>TH</strong> as in "thin".
-    </div>
+  <strong>Hint:</strong>
+  ${activeHint}
+</div>
 
     <div id="result" class="result"></div>
 
@@ -256,7 +377,7 @@ export default function Wordle() {
 
   <script>
 
-    const target = ['/θ/', '/ɪ/', '/n/'];
+    const target = ${JSON.stringify(activeTargetWord)};
 
     let selected = [];
 
@@ -302,8 +423,9 @@ export default function Wordle() {
         result.className = 'result correct';
 
         result.innerHTML =
-          'Correct! /θɪn/ = THIN';
-
+  'Correct! /${activeTargetWord
+    .map((phoneme: string) => phoneme.replaceAll("/", ""))
+  .join("")}/ = ${activeAnswer.toUpperCase()}';
       } else {
 
         result.className = 'result incorrect';
@@ -370,17 +492,21 @@ export default function Wordle() {
   };
 
   const checkAnswer = () => {
-    if (selectedPhonemes.length !== targetWord.length) {
+    if (selectedPhonemes.length !== activeTargetWord.length) {
       setMessage("Please enter three phonemes.");
       return;
     }
 
     const correct = selectedPhonemes.every(
-      (phoneme, index) => phoneme === targetWord[index]
+      (phoneme, index) => phoneme === activeTargetWord[index]
     );
 
     if (correct) {
-      setMessage("Correct! /θɪn/ = THIN");
+      setMessage(
+        `Correct! /${activeTargetWord
+          .map((phoneme: string) => phoneme.replaceAll("/", ""))
+          .join("")}/ = ${activeAnswer.toUpperCase()}`
+      );
     } else {
       setMessage("Not quite. Try again.");
     }
@@ -415,6 +541,25 @@ export default function Wordle() {
                 <h2>Activity Settings</h2>
               </div>
             </div>
+
+            <div className="settingGroup">
+  <label>Saved Wordle Activities</label>
+
+  {savedWordleActivities.length === 0 ? (
+    <p className="emptyState">No saved Wordle activities yet.</p>
+  ) : (
+    <select
+  value={selectedActivityId}
+  onChange={(event) => setSelectedActivityId(event.target.value)}
+>
+      {savedWordleActivities.map((activity) => (
+        <option key={activity.id} value={activity.id}>
+          {activity.name} — {activity.difficulty}
+        </option>
+      ))}
+    </select>
+  )}
+</div>
 
             <div className="settingGroup">
               <label htmlFor="difficulty">Difficulty</label>
@@ -498,7 +643,8 @@ export default function Wordle() {
             {message && (
   <div
     className={`feedback ${
-      message.startsWith("Correct")
+      message.startsWith("Correct") ||
+      message.includes("saved successfully")
         ? "feedbackSuccess"
         : "feedbackError"
     }`}
@@ -551,21 +697,18 @@ export default function Wordle() {
               </div>
 
               <div className="phonemeHint">
-                <strong>Hint</strong>
+  <strong>Hint</strong>
 
-                <p>
-                  The first phoneme is <strong>/θ/</strong>, which corresponds
-                  to <strong>TH</strong> as in "thin".
-                </p>
-              </div>
+  <p>{activeHint}</p>
+</div>
 
-              {message.startsWith("Correct") && (
-                <div className="answerReveal">
-                  <span>Correct answer</span>
-                  <strong>/θɪn/</strong>
-                  <strong>THIN</strong>
-                </div>
-              )}
+{message.startsWith("Correct") && (
+  <div className="answerReveal">
+    <span>Correct answer</span>
+    <strong>{activeTargetWord.join("")}</strong>
+    <strong>{activeAnswer.toUpperCase()}</strong>
+  </div>
+)}
             </div>
           </div>
         </section>
@@ -578,14 +721,23 @@ export default function Wordle() {
               Generate a standalone HTML file that can be opened and played
               in a normal web browser.
             </p>
-          </div>
+            <div className="buttonRow">
+  <button
+    className="secondaryButton"
+    onClick={saveWordleActivity}
+    disabled={isSaving}
+  >
+    {isSaving ? "Saving..." : "Save Activity"}
+  </button>
 
-          <button
-  className="primaryButton generateButton"
-  onClick={generateHTML}
->
-  Generate HTML
-</button>
+  <button
+    className="primaryButton generateButton"
+    onClick={generateHTML}
+  >
+    Generate HTML
+  </button>
+  </div>
+  </div>
         </section>
       </main>
 
